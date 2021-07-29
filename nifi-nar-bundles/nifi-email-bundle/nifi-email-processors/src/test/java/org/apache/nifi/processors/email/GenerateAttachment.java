@@ -20,12 +20,16 @@ package org.apache.nifi.processors.email;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import javax.mail.MessagingException;
+import javax.mail.internet.MimeBodyPart;
 import javax.mail.internet.MimeMessage;
+import javax.mail.internet.MimeMultipart;
 import org.apache.commons.mail.Email;
 import org.apache.commons.mail.EmailAttachment;
 import org.apache.commons.mail.EmailException;
 import org.apache.commons.mail.MultiPartEmail;
 import org.apache.commons.mail.SimpleEmail;
+import org.bouncycastle.mail.smime.SMIMEException;
+import org.bouncycastle.mail.smime.SMIMESignedGenerator;
 
 public class GenerateAttachment {
     String from;
@@ -54,6 +58,18 @@ public class GenerateAttachment {
         }
 
         return output.toByteArray();
+    }
+
+    public byte[] SimpleSignedEmail(final SMIMESignedGenerator generator) throws SMIMEException, IOException, MessagingException {
+        final MimeMessage mimeMessage = SimpleEmailMimeMessage();
+        final MimeBodyPart baseMsg = new MimeBodyPart();
+        baseMsg.setText("I AM TO BE SIGNED");
+        final MimeMultipart signed = generator.generate(baseMsg);
+        mimeMessage.setContent(signed, signed.getContentType());
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            mimeMessage.writeTo(output);
+            return output.toByteArray();
+        }
     }
 
     public MimeMessage SimpleEmailMimeMessage() {
