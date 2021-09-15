@@ -508,7 +508,7 @@ public final class CertificateUtils {
             certBuilder.addExtension(Extension.authorityKeyIdentifier, false, new JcaX509ExtensionUtils().createAuthorityKeyIdentifier(keyPair.getPublic()));
 
             // (2) extendedKeyUsage extension
-            certBuilder.addExtension(Extension.extendedKeyUsage, false, new ExtendedKeyUsage(new KeyPurposeId[]{KeyPurposeId.id_kp_clientAuth, KeyPurposeId.id_kp_serverAuth}));
+            certBuilder.addExtension(Extension.extendedKeyUsage, false, new ExtendedKeyUsage(new KeyPurposeId[]{KeyPurposeId.id_kp_clientAuth, KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_emailProtection, KeyPurposeId.anyExtendedKeyUsage}));
 
             // (3) subjectAlternativeName extension. Include CN as a SAN entry if it exists.
             final String cn = getCommonName(dn);
@@ -592,7 +592,7 @@ public final class CertificateUtils {
             certBuilder.addExtension(Extension.basicConstraints, false, new BasicConstraints(false));
 
             // (2) extendedKeyUsage extension
-            certBuilder.addExtension(Extension.extendedKeyUsage, false, new ExtendedKeyUsage(new KeyPurposeId[]{KeyPurposeId.id_kp_clientAuth, KeyPurposeId.id_kp_serverAuth}));
+            certBuilder.addExtension(Extension.extendedKeyUsage, false, new ExtendedKeyUsage(new KeyPurposeId[]{KeyPurposeId.id_kp_clientAuth, KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_emailProtection, KeyPurposeId.anyExtendedKeyUsage}));
 
             // (3) subjectAlternativeName
             if (extensions != null && extensions.getExtension(Extension.subjectAlternativeName) != null) {
