@@ -46,6 +46,7 @@ import org.apache.nifi.annotation.behavior.WritesAttributes;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.components.PropertyDescriptor;
+import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.logging.ComponentLog;
@@ -57,28 +58,46 @@ import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.exception.FlowFileHandlingException;
 import org.apache.nifi.processor.io.InputStreamCallback;
 import org.apache.nifi.processor.io.OutputStreamCallback;
+import org.apache.nifi.processor.util.StandardValidators;
 
 
 
 @SupportsBatching
 @EventDriven
 @SideEffectFree
-@Tags({"split", "email"})
+@Tags({"split", "email", "content"})
 @InputRequirement(Requirement.INPUT_REQUIRED)
-@CapabilityDescription("Extract attachments from a mime formatted email file, splitting them into individual flowfiles.")
+@CapabilityDescription("Extract attachments from a mime formatted email file, splitting them into individual flowfiles. You may optionally extract the email content, if desired.")
 @WritesAttributes({
         @WritesAttribute(attribute = "filename ", description = "The filename of the attachment"),
         @WritesAttribute(attribute = "email.attachment.parent.filename ", description = "The filename of the parent FlowFile"),
         @WritesAttribute(attribute = "email.attachment.parent.uuid", description = "The UUID of the original FlowFile."),
+        @WritesAttribute(attribute = "email.content.mime.type", description = "If extract content is enabled, the mime type of the email content."),
         @WritesAttribute(attribute = "mime.type", description = "The mime type of the attachment.")})
 
 public class ExtractEmailAttachments extends AbstractProcessor {
     public static final String ATTACHMENT_ORIGINAL_FILENAME = "email.attachment.parent.filename";
     public static final String ATTACHMENT_ORIGINAL_UUID = "email.attachment.parent.uuid";
+    public static final String CONTENT_MIME_TYPE = "email.content.mime.type";
+
+    public static final PropertyDescriptor EXTRACT_CONTENT = new PropertyDescriptor.Builder()
+            .name("EXTRACT_CONTENT")
+            .displayName("Extract Email Content")
+            .description("Whether or not to also extract the email body contents and write it to its own relationship.")
+            .required(true)
+            .expressionLanguageSupported(ExpressionLanguageScope.NONE)
+            .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
+            .allowableValues("true", "false")
+            .defaultValue("false")
+            .build();
 
     public static final Relationship REL_ATTACHMENTS = new Relationship.Builder()
             .name("attachments")
             .description("Each individual attachment will be routed to the attachments relationship")
+            .build();
+    public static final Relationship REL_CONTENT = new Relationship.Builder()
+            .name("content")
+            .description("Each email content will be routed to the content relationship")
             .build();
     public static final Relationship REL_ORIGINAL = new Relationship.Builder()
             .name("original")
@@ -96,11 +115,13 @@ public class ExtractEmailAttachments extends AbstractProcessor {
     protected void init(final ProcessorInitializationContext context) {
         final Set<Relationship> relationships = new HashSet<>();
         relationships.add(REL_ATTACHMENTS);
+        relationships.add(REL_CONTENT);
         relationships.add(REL_ORIGINAL);
         relationships.add(REL_FAILURE);
         this.relationships = Collections.unmodifiableSet(relationships);
 
         final List<PropertyDescriptor> descriptors = new ArrayList<>();
+        descriptors.add(EXTRACT_CONTENT);
 
         this.descriptors = Collections.unmodifiableList(descriptors);
     }
@@ -112,9 +133,12 @@ public class ExtractEmailAttachments extends AbstractProcessor {
         if (originalFlowFile == null) {
             return;
         }
+        final List<FlowFile> contentList = new ArrayList<>();
         final List<FlowFile> attachmentsList = new ArrayList<>();
         final List<FlowFile> invalidFlowFilesList = new ArrayList<>();
         final List<FlowFile> originalFlowFilesList = new ArrayList<>();
+
+        final boolean extractContentEnabled = context.getProperty(EXTRACT_CONTENT).asBoolean();
 
         final String requireStrictAddresses = "false";
 
@@ -134,8 +158,8 @@ public class ExtractEmailAttachments extends AbstractProcessor {
                             throw new MessagingException("Message failed RFC-2822 validation: No Sender");
                         }
                         originalFlowFilesList.add(originalFlowFile);
+                        final String originalFlowFileName = originalFlowFile.getAttribute(CoreAttributes.FILENAME.key());
                         if (parser.hasAttachments()) {
-                            final String originalFlowFileName = originalFlowFile.getAttribute(CoreAttributes.FILENAME.key());
                             try {
                                 for (final DataSource data : parser.getAttachmentList()) {
                                     FlowFile split = session.create(originalFlowFile);
@@ -168,6 +192,35 @@ public class ExtractEmailAttachments extends AbstractProcessor {
                                 invalidFlowFilesList.add(originalFlowFile);
                             }
                         }
+                        if (extractContentEnabled && (parser.hasPlainContent() || parser.hasHtmlContent())) {
+                            try {
+                                FlowFile emailContentFlowFile = session.create(originalFlowFile);
+                                final Map<String, String> attributes = new HashMap<>();
+                                final String parentUuid = originalFlowFile.getAttribute(CoreAttributes.UUID.key());
+                                attributes.put(ATTACHMENT_ORIGINAL_UUID, parentUuid);
+                                attributes.put(ATTACHMENT_ORIGINAL_FILENAME, originalFlowFileName);
+                                emailContentFlowFile = session.append(emailContentFlowFile, new OutputStreamCallback() {
+                                    @Override
+                                    public void process(OutputStream out) throws IOException {
+                                        if (parser.hasPlainContent()) {
+                                            out.write(parser.getPlainContent().getBytes());
+                                        } else if (parser.hasHtmlContent()) {
+                                            out.write(parser.getHtmlContent().getBytes());
+                                        }
+                                    }
+                                });
+                                emailContentFlowFile = session.putAllAttributes(emailContentFlowFile, attributes);
+                                contentList.add(emailContentFlowFile);
+                            } catch(FlowFileHandlingException e) {
+                                // Something went wrong
+                                // Removing FlowFiles that may have been created
+                                session.remove(contentList);
+                                // Removing the original flow from its list
+                                originalFlowFilesList.remove(originalFlowFile);
+                                logger.error("Flowfile {} triggered error {} while processing email content message removing generated FlowFiles from sessions", new Object[]{originalFlowFile, e});
+                                invalidFlowFilesList.add(originalFlowFile);
+                            }
+                        }
                     } catch (Exception e) {
                         // Another error hit...
                         // Removing the original flow from its list
@@ -180,6 +233,7 @@ public class ExtractEmailAttachments extends AbstractProcessor {
         });
 
         session.transfer(attachmentsList, REL_ATTACHMENTS);
+        session.transfer(contentList, REL_CONTENT);
 
         // As per above code, originalFlowfile may be routed to invalid or
         // original depending on RFC2822 compliance.

@@ -22,12 +22,13 @@ import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 import org.junit.Assert;
 import org.junit.Test;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.CoreMatchers.equalTo;
 
 public class TestExtractEmailAttachments {
     // Setups the fields to be used...
@@ -38,7 +39,6 @@ public class TestExtractEmailAttachments {
     String hostName = "bermudatriangle";
 
     GenerateAttachment attachmentGenerator = new GenerateAttachment(from, to, subject, message, hostName);
-
 
     @Test
     public void testValidEmailWithAttachments() throws Exception {
@@ -53,6 +53,7 @@ public class TestExtractEmailAttachments {
         runner.assertTransferCount(ExtractEmailAttachments.REL_ORIGINAL, 1);
         runner.assertTransferCount(ExtractEmailAttachments.REL_FAILURE, 0);
         runner.assertTransferCount(ExtractEmailAttachments.REL_ATTACHMENTS, 1);
+        runner.assertTransferCount(ExtractEmailAttachments.REL_CONTENT, 0);
         // Have a look at the attachments...
         final List<MockFlowFile> splits = runner.getFlowFilesForRelationship(ExtractEmailAttachments.REL_ATTACHMENTS);
         splits.get(0).assertAttributeEquals("filename", "pom.xml1");
@@ -62,6 +63,7 @@ public class TestExtractEmailAttachments {
     public void testValidEmailWithMultipleAttachments() throws Exception {
         Random rnd = new Random() ;
         final TestRunner runner = TestRunners.newTestRunner(new ExtractEmailAttachments());
+        runner.setProperty(ExtractEmailAttachments.EXTRACT_CONTENT, "true");
 
         // Create the message dynamically
         int amount = rnd.nextInt(10) + 1;
@@ -73,6 +75,7 @@ public class TestExtractEmailAttachments {
         runner.assertTransferCount(ExtractEmailAttachments.REL_ORIGINAL, 1);
         runner.assertTransferCount(ExtractEmailAttachments.REL_FAILURE, 0);
         runner.assertTransferCount(ExtractEmailAttachments.REL_ATTACHMENTS, amount);
+        runner.assertTransferCount(ExtractEmailAttachments.REL_CONTENT, 1);
         // Have a look at the attachments...
         final List<MockFlowFile> splits = runner.getFlowFilesForRelationship(ExtractEmailAttachments.REL_ATTACHMENTS);
 
@@ -82,6 +85,10 @@ public class TestExtractEmailAttachments {
         }
 
         Assert.assertTrue(filenames.containsAll(Arrays.asList("pom.xml1", "pom.xml" + amount)));
+
+        // Have a look at the contents...
+        final List<MockFlowFile> bodies = runner.getFlowFilesForRelationship(ExtractEmailAttachments.REL_CONTENT);
+        assertThat(bodies.get(0).getContent(), equalTo(message));
     }
 
     @Test
@@ -97,7 +104,7 @@ public class TestExtractEmailAttachments {
         runner.assertTransferCount(ExtractEmailAttachments.REL_ORIGINAL, 1);
         runner.assertTransferCount(ExtractEmailAttachments.REL_FAILURE, 0);
         runner.assertTransferCount(ExtractEmailAttachments.REL_ATTACHMENTS, 0);
-
+        runner.assertTransferCount(ExtractEmailAttachments.REL_CONTENT, 0);
     }
 
     @Test
@@ -109,5 +116,6 @@ public class TestExtractEmailAttachments {
         runner.assertTransferCount(ExtractEmailAttachments.REL_ORIGINAL, 0);
         runner.assertTransferCount(ExtractEmailAttachments.REL_FAILURE, 1);
         runner.assertTransferCount(ExtractEmailAttachments.REL_ATTACHMENTS, 0);
+        runner.assertTransferCount(ExtractEmailAttachments.REL_CONTENT, 0);
     }
 }
